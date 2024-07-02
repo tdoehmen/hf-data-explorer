@@ -1,10 +1,20 @@
 import { useEffect, useState } from "react"
 
-import { DuckDBClient } from "../services/DuckDBClient"
-import type { DuckDBClientConfig } from "../services/DuckDBClient"
+import { DuckDBClient, DuckDBClientConfig } from "../services/DuckDBClient"
+import {
+    MotherDuckClient,
+    MotherDuckClientConfig
+} from "../services/MotherDuckClient"
 
-const useDuckDB = (config: DuckDBClientConfig = {}) => {
-    const [client, setClient] = useState<DuckDBClient | null>(null)
+type ClientConfig = DuckDBClientConfig | MotherDuckClientConfig
+
+const useDuckDB = (
+    config: ClientConfig = { mdToken: "xxxx" },
+    useMotherDuck: boolean = true
+) => {
+    const [client, setClient] = useState<
+        DuckDBClient | MotherDuckClient | null
+    >(null)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
@@ -14,22 +24,21 @@ const useDuckDB = (config: DuckDBClientConfig = {}) => {
             setLoading(true)
             if (client) {
                 await client.close().catch((error) => {
-                    console.error(
-                        "Error closing previous DuckDB client:",
-                        error
-                    )
+                    console.error("Error closing previous client:", error)
                 })
             }
 
             try {
-                const newClient = new DuckDBClient(config)
+                const newClient = useMotherDuck
+                    ? new MotherDuckClient(config as MotherDuckClientConfig)
+                    : new DuckDBClient(config as DuckDBClientConfig)
                 await newClient.initialize()
                 if (isMounted) {
                     setClient(newClient)
                     setLoading(false)
                 }
             } catch (error) {
-                console.error("Error initializing DuckDB client:", error)
+                console.error("Error initializing client:", error)
                 if (isMounted) {
                     setLoading(false)
                 }
@@ -42,13 +51,13 @@ const useDuckDB = (config: DuckDBClientConfig = {}) => {
             isMounted = false
             if (client) {
                 client.close().catch((error) => {
-                    console.error("Error closing DuckDB client:", error)
+                    console.error("Error closing client:", error)
                 })
             }
         }
-    }, [JSON.stringify(config)]) // Reinitialize when config changes
+    }, [JSON.stringify(config)])
 
     return { client, loading }
 }
 
-export { DuckDBClient, useDuckDB }
+export { DuckDBClient, MotherDuckClient, useDuckDB }

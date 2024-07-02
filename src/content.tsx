@@ -18,6 +18,9 @@ import "ag-grid-community/styles/ag-grid.css"
 import "ag-grid-community/styles/ag-theme-balham.css"
 import "./styles.css"
 
+import { createRoot } from "react-dom/client"
+import { MotherDuckClient } from "services/MotherDuckClient"
+
 import { useStorage } from "@plasmohq/storage/hook"
 
 export const config: PlasmoCSConfig = {
@@ -258,3 +261,31 @@ const Content = () => {
 }
 
 export default Content
+
+// Create a function to initialize the client and run a query
+async function runMotherDuckQuery(mdToken: string, query: string) {
+    console.log("Initializing MotherDuckClient")
+    const client = new MotherDuckClient({ mdToken })
+
+    try {
+        await client.initialize()
+        console.log("MotherDuckClient initialized")
+
+        console.log("Executing query:", query)
+        const result = await client.queryStream(query)
+        console.log("Query result:", result)
+
+        return result
+    } catch (error) {
+        console.error("Error in MotherDuck query:", error)
+        throw error
+    }
+}
+
+// Expose the function to the web page
+window.runMotherDuckQuery = runMotherDuckQuery
+
+// Notify that the content script is ready
+window.dispatchEvent(new Event("motherDuckReady"))
+
+console.log("MotherDuck content script loaded")

@@ -20,7 +20,9 @@
     "dependencies": {
         "@babel/preset-env": "^7.24.7",
         "@duckdb/duckdb-wasm": "1.28.1-dev106.0",
+        "@motherduck/wasm-client": "0.6.1",
         "@plasmohq/storage": "^1.11.0",
+        "@plasmohq/messaging": "^0.6.2",
         "@radix-ui/react-icons": "^1.3.0",
         "@radix-ui/react-label": "^2.1.0",
         "@radix-ui/react-slot": "^1.1.0",
@@ -45,6 +47,7 @@
         "tailwindcss-animate": "^1.0.7"
     },
     "devDependencies": {
+        "@babel/core": "^7.12.0",
         "@babel/preset-typescript": "^7.24.7",
         "@ianvs/prettier-plugin-sort-imports": "4.1.1",
         "@jest/globals": "^29.7.0",
@@ -76,5 +79,16 @@
     },
     "contributors": [
         "louisgv"
+    ],
+    "webAccessibleResources": [
+        {
+            "resources": [
+                "motherduck-worker-entry.ts",
+                "motherduck-worker.ts"
+            ],
+            "matches": [
+                "<all_urls>"
+            ]
+        }
     ]
 }
