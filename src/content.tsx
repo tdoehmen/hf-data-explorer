@@ -261,31 +261,3 @@ const Content = () => {
 }
 
 export default Content
-
-// Create a function to initialize the client and run a query
-async function runMotherDuckQuery(mdToken: string, query: string) {
-    console.log("Initializing MotherDuckClient")
-    const client = new MotherDuckClient({ mdToken })
-
-    try {
-        await client.initialize()
-        console.log("MotherDuckClient initialized")
-
-        console.log("Executing query:", query)
-        const result = await client.queryStream(query)
-        console.log("Query result:", result)
-
-        return result
-    } catch (error) {
-        console.error("Error in MotherDuck query:", error)
-        throw error
-    }
-}
-
-// Expose the function to the web page
-window.runMotherDuckQuery = runMotherDuckQuery
-
-// Notify that the content script is ready
-window.dispatchEvent(new Event("motherDuckReady"))
-
-console.log("MotherDuck content script loaded")

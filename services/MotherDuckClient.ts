@@ -1,8 +1,9 @@
-import { sendToBackground } from "@plasmohq/messaging"
+import { MDConnection } from "@motherduck/wasm-client"
 
 export interface MotherDuckClientConfig {
     mdToken: string
     views?: { [key: string]: string[] }
+    wasmClientVersion?: string // Optional: Allow user to specify version
 }
 
 type SchemaField = {
@@ -11,70 +12,160 @@ type SchemaField = {
     databaseType: string
 }
 
-interface QueryResult {
-    schema: SchemaField[]
-    readRows: () => AsyncGenerator<any[], void, unknown>
+function sanitizeViewName(name: string): string {
+    let sanitized = name.replace(/[^a-zA-Z0-9_]/g, "_")
+    sanitized = sanitized.toLowerCase()
+    return sanitized
 }
 
 export class MotherDuckClient {
+    private connection: MDConnection | null = null
+    private currentResultSet: any = null
     private isQueryRunning: boolean = false
     private isCancelling: boolean = false
 
     constructor(private config: MotherDuckClientConfig) {}
 
     async initialize(): Promise<void> {
-        console.log("MotherDuckClient: Initializing")
-        const response = await sendToBackground({
-            name: "initializeMotherDuck",
-            body: { mdToken: this.config.mdToken }
+        const workerCode = `
+            importScripts('https://cdn.jsdelivr.net/npm/@motherduck/wasm-client/index_with_arrow.js');
+            
+            let mdConnection = null;
+
+            self.onmessage = async function(e) {
+                const { type, payload } = e.data;
+
+                switch(type) {
+                    case 'initialize':
+                        mdConnection = MDConnection.create({ mdToken: payload.mdToken });
+                        await mdConnection.isInitialized();
+                        self.postMessage({ type: 'initialized' });
+                        break;
+                    case 'query':
+                        if (!mdConnection) {
+                            self.postMessage({ type: 'error', error: 'MotherDuck not initialized' });
+                            return;
+                        }
+                        try {
+                            const result = await mdConnection.executeQuery(payload.query);
+                            self.postMessage({ type: 'queryResult', result });
+                        } catch (error) {
+                            self.postMessage({ type: 'error', error: error.message });
+                        }
+                        break;
+                    case 'cancel':
+                        if (mdConnection) {
+                            await mdConnection.cancelQuery();
+                            self.postMessage({ type: 'cancelled' });
+                        }
+                        break;
+                    case 'close':
+                        if (mdConnection) {
+                            await mdConnection.close();
+                            mdConnection = null;
+                            self.postMessage({ type: 'closed' });
+                        }
+                        break;
+                }
+            };
+        `
+
+        const workerBlob = new Blob([workerCode], {
+            type: "application/javascript"
         })
+        const workerUrl = URL.createObjectURL(workerBlob)
 
-        console.log("MotherDuckClient: Initialization response", response)
+        const worker = new Worker(workerUrl)
 
-        if (!response.success) {
-            console.error(
-                "MotherDuckClient: Initialization failed",
-                response.error
-            )
-            throw new Error(response.error)
+        worker.onmessage = (event) => {
+            if (event.data.type === "initialized") {
+                this.connection = { worker } as any // Type assertion as MDConnection for compatibility
+                console.log("MotherDuck initialized")
+            }
         }
 
-        await this.loadConfig(this.config)
-        console.log("MotherDuckClient: Initialized successfully")
+        worker.postMessage({
+            type: "initialize",
+            payload: { mdToken: this.config.mdToken }
+        })
+
+        await new Promise<void>((resolve) => {
+            const checkInitialized = setInterval(() => {
+                if (this.connection) {
+                    clearInterval(checkInitialized)
+                    resolve()
+                }
+            }, 100)
+        })
+
+        URL.revokeObjectURL(workerUrl)
+
+        await this.loadConfig(this.config || {})
     }
 
-    private async loadConfig(config: MotherDuckClientConfig): Promise<void> {
+    private async executeQuery(query: string): Promise<any> {
+        return new Promise((resolve, reject) => {
+            if (!this.connection) {
+                reject(new Error("MotherDuck not initialized"))
+                return
+            }
+
+            const messageHandler = (event) => {
+                if (event.data.type === "queryResult") {
+                    this.connection.worker.removeEventListener(
+                        "message",
+                        messageHandler
+                    )
+                    resolve(event.data.result)
+                } else if (event.data.type === "error") {
+                    this.connection.worker.removeEventListener(
+                        "message",
+                        messageHandler
+                    )
+                    reject(new Error(event.data.error))
+                }
+            }
+
+            this.connection.worker.addEventListener("message", messageHandler)
+            this.connection.worker.postMessage({
+                type: "query",
+                payload: { query }
+            })
+        })
+    }
+
+    async loadConfig(config: MotherDuckClientConfig): Promise<void> {
+        if (!this.connection) {
+            throw new Error("MotherDuck not initialized")
+        }
+
         if (config.views) {
+            const invalidKeywords = (
+                await this.executeQuery(
+                    "SELECT keyword_name FROM duckdb_keywords() WHERE keyword_category = 'reserved';"
+                )
+            ).data
+                .toRows()
+                .map((row) => row[0])
+
             for (const [viewName, filePaths] of Object.entries(config.views)) {
                 const filePathsString = filePaths
                     .map((path) => `'${path}'`)
                     .join(", ")
+                let sanitizedViewName = sanitizeViewName(viewName)
+
+                if (invalidKeywords.includes(sanitizedViewName)) {
+                    sanitizedViewName += "_view"
+                }
+
                 await this.executeQuery(
-                    `CREATE OR REPLACE VIEW ${viewName} AS SELECT * FROM read_parquet([${filePathsString}]);`
+                    `CREATE OR REPLACE VIEW ${sanitizedViewName} AS SELECT * FROM read_parquet([${filePathsString}]);`
                 )
             }
         }
     }
 
-    private async executeQuery(query: string): Promise<any> {
-        console.log("MotherDuckClient: Executing query", query)
-        const response = await sendToBackground({
-            name: "executeQuery",
-            body: { query }
-        })
-
-        console.log("MotherDuckClient: Query response", response)
-
-        if (!response.success) {
-            console.error("MotherDuckClient: Query failed", response.error)
-            throw new Error(response.error)
-        }
-
-        return response.result
-    }
-
-    async queryStream(query: string, params?: any[]): Promise<QueryResult> {
-        console.log("queryStream called with:", query, params)
+    async queryStream(query: string, params?: any[]) {
         if (this.isQueryRunning) {
             throw new Error("A query is already running")
         }
@@ -91,7 +182,7 @@ export class MotherDuckClient {
                 result = await this.executeQuery(query)
             }
 
-            console.log("Query result:", result)
+            this.currentResultSet = result
 
             const schema: SchemaField[] = result.schema.fields.map((field) => ({
                 name: field.name,
@@ -101,8 +192,14 @@ export class MotherDuckClient {
 
             return {
                 schema,
-                readRows: async function* () {
-                    yield result.data.toRows()
+                async *readRows() {
+                    yield result.data.toRows().map((row) => {
+                        const jsonRow = {}
+                        for (let i = 0; i < schema.length; i++) {
+                            jsonRow[schema[i].name] = row[i]
+                        }
+                        return jsonRow
+                    })
                 }
             }
         } finally {
@@ -111,13 +208,29 @@ export class MotherDuckClient {
     }
 
     async cancelQuery(): Promise<void> {
-        if (this.isQueryRunning) {
+        if (this.connection && this.isQueryRunning) {
             this.isCancelling = true
             try {
-                await sendToBackground({ name: "cancelQuery" })
+                await new Promise<void>((resolve) => {
+                    const messageHandler = (event) => {
+                        if (event.data.type === "cancelled") {
+                            this.connection.worker.removeEventListener(
+                                "message",
+                                messageHandler
+                            )
+                            resolve()
+                        }
+                    }
+                    this.connection.worker.addEventListener(
+                        "message",
+                        messageHandler
+                    )
+                    this.connection.worker.postMessage({ type: "cancel" })
+                })
             } finally {
                 this.isQueryRunning = false
                 this.isCancelling = false
+                this.currentResultSet = null
             }
         }
     }
@@ -130,13 +243,33 @@ export class MotherDuckClient {
     }
 
     async close(): Promise<void> {
-        this.isQueryRunning = false
-        this.isCancelling = false
-        await sendToBackground({ name: "closeConnection" })
+        if (this.connection) {
+            await new Promise<void>((resolve) => {
+                const messageHandler = (event) => {
+                    if (event.data.type === "closed") {
+                        this.connection.worker.removeEventListener(
+                            "message",
+                            messageHandler
+                        )
+                        resolve()
+                    }
+                }
+                this.connection.worker.addEventListener(
+                    "message",
+                    messageHandler
+                )
+                this.connection.worker.postMessage({ type: "close" })
+            })
+            this.connection = null
+        }
     }
 
     async getTables(): Promise<string[]> {
+        if (!this.connection) {
+            throw new Error("MotherDuck not initialized")
+        }
+
         const result = await this.executeQuery("SHOW TABLES")
-        return result.data.toRows().map((row) => row.name as string)
+        return result.data.toRows().map((row) => row[0] as string)
     }
 }
