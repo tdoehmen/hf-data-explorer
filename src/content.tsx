@@ -10,6 +10,9 @@ import "ag-grid-community/styles/ag-grid.css"
 import "ag-grid-community/styles/ag-theme-quartz.css"
 import "./styles.css"
 
+import { createRoot } from "react-dom/client"
+import { MotherDuckClient } from "services/MotherDuckClient"
+
 import { useStorage } from "@plasmohq/storage/hook"
 
 import Explorer from "./explorer"
