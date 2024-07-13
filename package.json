@@ -71,10 +71,27 @@
     },
     "manifest": {
         "host_permissions": [
+            "https://app.motherduck.com/*",
+            "http://localhost/*",
+            "ws://localhost/*",
             "https://huggingface.co/datasets/*"
         ],
+        "permissions": [
+            "tabs",
+            "localhost"
+        ],
+        "web_accessible_resources": [
+            {
+                "matches": [
+                    "<all_urls>"
+                ],
+                "resources": [
+                    "assets/*"
+                ]
+            }
+        ],
         "content_security_policy": {
-            "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+            "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self' https://app.motherduck.com ws://localhost:* http://localhost:* http://127.0.0.1:*"
         },
         "cross_origin_embedder_policy": {
             "value": "require-corp"
@@ -85,16 +102,5 @@
     },
     "contributors": [
         "louisgv"
-    ],
-    "webAccessibleResources": [
-        {
-            "resources": [
-                "motherduck-worker-entry.ts",
-                "motherduck-worker.ts"
-            ],
-            "matches": [
-                "<all_urls>"
-            ]
-        }
     ]
 }

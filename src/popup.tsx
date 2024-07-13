@@ -6,8 +6,11 @@ import { Switch } from "@/components/ui/switch"
 import React, { useEffect, useState } from "react"
 import { FaGithub } from "react-icons/fa"
 import { FiExternalLink } from "react-icons/fi"
+import { MotherDuckClient } from "services/MotherDuckClient"
 
 import { useStorage } from "@plasmohq/storage/hook"
+
+import { setupMotherDuckInterceptor } from "./motherduck-setup"
 
 const DATASETS_URL = "https://huggingface.co/datasets"
 
@@ -18,9 +21,33 @@ const IndexPopup = () => {
         "loadViewsOnStartup",
         (v) => (v === undefined ? true : v)
     )
+    const [mdClient, setMdClient] = useState<MotherDuckClient | null>(null)
+    const [queryResult, setQueryResult] = useState<string | null>(null)
 
     useEffect(() => {
-        getCurrentTabInfo()
+        const initializeAndTest = async () => {
+            try {
+                console.log("Starting initialization...")
+                await getCurrentTabInfo()
+                console.log("Tab info retrieved")
+
+                setupMotherDuckInterceptor()
+                console.log("MotherDuck interceptor set up")
+
+                await initializeMotherDuckClient()
+                console.log("MotherDuck client initialized")
+
+                await runTestQuery()
+                console.log("Test query executed")
+            } catch (error) {
+                console.error(
+                    "Error during initialization or test query:",
+                    error
+                )
+            }
+        }
+
+        initializeAndTest()
     }, [])
 
     const getCurrentTabInfo = async () => {
@@ -33,6 +60,58 @@ const IndexPopup = () => {
                     }
                 }
             )
+        }
+    }
+
+    const initializeMotherDuckClient = async () => {
+        try {
+            console.log("Creating MotherDuck client...")
+            const client = new MotherDuckClient({
+                mdToken: "<your-token-here>."
+            })
+            console.log("MotherDuck client created, initializing...")
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(
+                    () =>
+                        reject(
+                            new Error(
+                                "MotherDuck client initialization timed out"
+                            )
+                        ),
+                    30000
+                )
+            )
+
+            await Promise.race([client.initialize(), timeoutPromise])
+
+            console.log("MotherDuck client initialized")
+            setMdClient(client)
+            console.log("MotherDuck client state updated")
+        } catch (error) {
+            console.error("Error initializing MotherDuck client:", error)
+            throw error
+        }
+    }
+
+    const runTestQuery = async () => {
+        if (mdClient) {
+            try {
+                console.log("Running test query...")
+                const result = await mdClient.queryStream(
+                    "SELECT 'Hello from MotherDuck' AS greeting"
+                )
+                let rows = []
+                for await (const batch of result.readRows()) {
+                    rows = rows.concat(batch)
+                }
+                console.log("Query result:", rows)
+                setQueryResult(JSON.stringify(rows))
+            } catch (error) {
+                console.error("Error running query:", error)
+                setQueryResult("Error: " + error.message)
+            }
+        } else {
+            console.error("MotherDuck client not initialized")
         }
     }
 
@@ -89,6 +168,14 @@ const IndexPopup = () => {
                 }>
                 Contribute <FaGithub className="ml-2" />
             </Button>
+            // In your popup component JSX
+            <Button onClick={runTestQuery}>Run Test Query</Button>
+            {queryResult && (
+                <div className="mt-4">
+                    <h2>Query Result:</h2>
+                    <pre>{queryResult}</pre>
+                </div>
+            )}
         </div>
     )
 }

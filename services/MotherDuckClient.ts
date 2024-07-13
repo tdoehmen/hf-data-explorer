@@ -23,6 +23,7 @@ export class MotherDuckClient {
         this.connection = MDConnection.create({
             mdToken: this.config.mdToken
         })
+
         await this.connection.isInitialized()
         await this.loadConfig(this.config)
     }
